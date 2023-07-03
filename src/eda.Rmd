@@ -1,0 +1,137 @@
+---
+title: "EDA"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r}
+library(readr)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+```
+
+# Load data:
+
+```{r}
+X_train_raw <- read.csv("../data/X_train.csv")
+X_test_raw <- read.csv("../data/X_test.csv")
+y_train <- read.csv("../data/y_train.csv")
+```
+
+# EDA
+
+Are samples' IDs in X and y aligned?
+
+```{r}
+sum(X_train_raw$ID != y_train$ID)
+```
+
+Missing values by column. Training set:
+
+```{r}
+tibble_ <- X_train_raw
+
+na_cols_train <- tibble(
+  column_names = names(tibble_),
+  missing_percentage = round(colMeans(is.na(tibble_)) * 100, 1)
+  ) %>% 
+  arrange(desc(missing_percentage)) %>% 
+  filter(missing_percentage > 0)
+
+na_cols_train
+```
+
+Test set:
+
+```{r}
+tibble_ <- X_test_raw
+
+na_cols_test <- tibble(
+  column_names = names(tibble_),
+  missing_percentage = round(colMeans(is.na(tibble_)) * 100, 1)
+  ) %>% 
+  arrange(desc(missing_percentage)) %>% 
+  filter(missing_percentage > 0)
+
+na_cols_test
+```
+
+Are cols with NAs the same in training and test sets?
+
+```{r}
+print("In train set only:")
+print(setdiff(na_cols_train$name, na_cols_test$name))
+
+print("In test set only:")
+print(setdiff(na_cols_test$name, na_cols_train$name))
+```
+
+Columns' dtypes:
+
+```{r}
+str(X_train_raw)
+```
+
+# Reproduce benchmark
+
+Fill-in NAs:
+
+```{r}
+X_train <- X_train_raw %>% replace(is.na(.), 0)
+X_test <- X_test_raw %>% replace(is.na(.), 0)
+```
+
+Drop unused cols. Mind that we use `ID` and `DAY_ID` as explanatory vars.
+
+```{r}
+X_train <- X_train %>% select(-COUNTRY)
+X_test <- X_test %>% select(-COUNTRY)
+```
+
+Fit OLS:
+
+```{r}
+lm_ <- lm(y_train$TARGET ~ ., data = X_train)
+```
+
+Compare with the OLS model in Py benchmlark notebook:
+
+```{r}
+py_lm_ <- read.csv("../tmp/py_benchmark_model_coeffs.csv")
+r_lm_ <- tibble(param = names(coef(lm_)), val = coef(lm_))
+
+# rename Intercept
+r_lm_$param[1] = "intercept"
+
+# outer join between two tibbles
+# ...
+lm_join_ <- full_join(py_lm_, r_lm_, by = "param", suffix = c(".py", ".r"))
+
+# element wise comparison of the models' coefficients
+lm_join_$equal <- near(py_lm_$val, r_lm_$val)
+
+lm_join_
+```
+
+Predict:
+
+```{r}
+y_hat_train <- predict(lm_, X_train)
+y_hat_test <- predict(lm_, X_test)
+```
+
+Spearman correlation for the predictions on the training set:
+
+```{r}
+cor(y_train$TARGET, y_hat_train, method = "spearman")
+```
+
+Export predictions on the test set:
+
+```{r}
+to_export <- tibble(ID = X_test_raw$ID, TARGET = y_hat_test)
+
+write_csv(to_export, "../data/y_hat_test.csv")
+```
