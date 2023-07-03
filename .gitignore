@@ -5,3 +5,5 @@
 *.Rproj
 environment.yml
 .vscode/
+*.html
+tmp/
