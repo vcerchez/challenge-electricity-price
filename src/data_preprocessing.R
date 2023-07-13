@@ -11,5 +11,6 @@ X_train <- X_train_raw %>% replace(is.na(.), 0)
 X_test <- X_test_raw %>% replace(is.na(.), 0)
 
 # Drop unused cols
-X_train <- X_train %>% select(-COUNTRY)
-X_test <- X_test %>% select(-COUNTRY)
+columns_to_drop <- c("ID", "DAY_ID", "COUNTRY", "DE_FR_EXCHANGE", "FR_NET_IMPORT", "DE_NET_IMPORT")
+X_train <- X_train %>% select(!one_of(columns_to_drop))
+X_test <- X_test %>% select(!one_of(columns_to_drop))
