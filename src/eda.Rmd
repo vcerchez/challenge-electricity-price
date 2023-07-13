@@ -5,11 +5,37 @@ output:
     df_print: paged
 ---
 
+# TODO:
+
+Model:
+
+1.    use dedicated models for FR and DE
+1.    Drop useless cols `ID` and `DAY_ID`
+1.    Impute NAs
+1.    Regularize
+1.    Try GAM
+1.    Try tree based models
+1.    Reverse date anonymization
+
+EDA:
+
+1.  ~~investigate correlations between vars~~
+2.  ~~`TARGET`-vars correlation~~
+3.  ~~duplicates among lines, meaning of country label and country prefix in var names~~
+4.  ~~are NAs simultaneously present in several cols for the same row ?~~
+
+# Import libraries
+
 ```{r}
 library(readr)
 library(dplyr)
 library(tidyr)
+library(purrr)
+library(tibble)
+library(Hmisc)
 library(ggplot2)
+library(corrplot)
+library(PerformanceAnalytics)
 ```
 
 # Load data:
@@ -20,13 +46,32 @@ X_test_raw <- read.csv("../data/X_test.csv")
 y_train <- read.csv("../data/y_train.csv")
 ```
 
+Shape of the data sets:
+
+```{r}
+print("X train:", )
+dim(X_train_raw)
+
+print("X test:", )
+dim(X_test_raw)
+
+print("y train:", )
+dim(y_train)
+```
+
 # EDA
 
-Are samples' IDs in X and y aligned?
+## ID alignement in X and y
+
+Are samples' IDs in X and y aligned? Number of misaligned rows:
 
 ```{r}
 sum(X_train_raw$ID != y_train$ID)
 ```
+
+Yes, they are.
+
+## Missing vals by variable
 
 Missing values by column. Training set:
 
@@ -62,19 +107,866 @@ Are cols with NAs the same in training and test sets?
 
 ```{r}
 print("In train set only:")
-print(setdiff(na_cols_train$name, na_cols_test$name))
+print(setdiff(na_cols_train$column_names, na_cols_test$column_names))
 
 print("In test set only:")
-print(setdiff(na_cols_test$name, na_cols_train$name))
+print(setdiff(na_cols_test$column_names, na_cols_train$column_names))
 ```
 
-Columns' dtypes:
+## Variables dtypes
+
+Columns' dtypes. The dtypes of all columns have been properly detected on the data import.
 
 ```{r}
 str(X_train_raw)
 ```
 
+## `COUNTRY` var and country label prefix
+
+Value counts in the `COUNTRY` column:
+
+```{r}
+X_train_raw %>%
+  count(COUNTRY) %>%
+  mutate(percentage = round(n / sum(n) * 100, 1))
+```
+
+The data describes two countries, FR and DE, roughly equally presented.
+
+Duplicates among `DAY_ID` in the training set:
+
+```{r}
+X_train_raw %>%
+  count(DAY_ID) %>%
+  mutate(n = n - 1) %>% 
+  rename(num_of_duplicates = n) %>% 
+  count(num_of_duplicates) %>% 
+  rename(count = n) %>% 
+  mutate(percentage = round(count / sum(count) * 100, 1))
+```
+
+Most of the lines (3/4) have duplicates.
+
+643\*2 + 208 gives the number of rows in the training set.
+
+Duplicates among `DAY_ID` in the test set:
+
+```{r}
+X_test_raw %>%
+  count(DAY_ID) %>%
+  mutate(n = n - 1) %>% 
+  rename(num_of_duplicates = n) %>% 
+  count(num_of_duplicates) %>% 
+  rename(count = n) %>% 
+  mutate(percentage = round(count / sum(count) * 100, 1))
+```
+
+The number of duplicates is more or less the same as in the training set.
+
+For the rows that have the same `DAY_ID`, in which columns are they different? Training set:
+
+```{r}
+tibble_ <- X_train_raw
+tibble_$TARGET <- y_train$TARGET
+
+# given a DAY_ID, select rows corresponding to it and get the names of the
+# columns where the two rows having this DAY_ID differ
+non_duplicated_cols <- function(day_id_) {
+  col_names <- tibble_ %>% 
+    filter(DAY_ID == day_id_) %>% 
+    select_if(function(column) !identical(column[1], column[2])) %>% 
+    names() %>% 
+    paste(., collapse = ", ")
+  return(col_names)
+}
+
+# get the list of day IDs that are duplicated in the table
+ids <- tibble_ %>%
+  count(DAY_ID) %>% 
+  filter(n > 1) %>% 
+  pull(DAY_ID)
+
+# for each pair of duplicated rows, get a list of column names that have 
+# different values in the pair of duplicated rows, drop duplicates
+results <- lapply(ids, non_duplicated_cols) %>% unique()
+
+results
+```
+
+Same question for the test set (no `TARGET`):
+
+```{r}
+tibble_ <- X_test_raw
+
+# given a DAY_ID, select rows corresponding to it and get the names of the
+# columns where the two rows having this DAY_ID differ
+non_duplicated_cols <- function(day_id_) {
+  col_names <- tibble_ %>% 
+    filter(DAY_ID == day_id_) %>% 
+    select_if(function(column) !identical(column[1], column[2])) %>% 
+    names() %>% 
+    paste(., collapse = ", ")
+  return(col_names)
+}
+
+# get the list of day IDs that are duplicated in the table
+ids <- tibble_ %>%
+  count(DAY_ID) %>% 
+  filter(n > 1) %>% 
+  pull(DAY_ID)
+
+# for each pair of duplicated rows, get a list of column names that have 
+# different values in the pair of duplicated rows, drop duplicates
+results <- lapply(ids, non_duplicated_cols) %>% unique()
+
+results
+```
+
+Thus the rows having the same value of `DAY_ID` differ only by `ID` (obviously), `COUNTRY` (FR or DE) and `TARGET` (prediction for FR or DE). For the rest they are identical.
+
+## Analysis of the lines with and without `DAY_ID` duplicates.
+
+First select rows that don't have duplicates:
+
+```{r}
+# get the list of day IDs that are not duplicated in the training set
+ids_train <- X_train_raw %>%
+  count(DAY_ID) %>% 
+  filter(n == 1) %>% 
+  pull(DAY_ID)
+
+# get the list of day IDs that are not duplicated in the test set
+ids_test <- X_test_raw %>%
+  count(DAY_ID) %>% 
+  filter(n == 1) %>% 
+  pull(DAY_ID)
+```
+
+To which countries do these lines in the training and test sets correspond?
+
+```{r}
+print(X_train_raw %>% filter(DAY_ID %in% ids_train) %>% count(COUNTRY))
+print(X_test_raw %>% filter(DAY_ID %in% ids_test) %>% count(COUNTRY))
+```
+
+All rows that don't have a duplicate in `DAY_ID` correspond to country FR.
+
+What about missing vals in these non duplicated lines?
+
+```{r}
+tibble_ <- X_train_raw %>% filter(DAY_ID %in% ids_train)
+
+na_cols_train <- tibble(
+  column_names = names(tibble_),
+  missing_percentage = round(colMeans(is.na(tibble_)) * 100, 1)
+  ) %>% 
+  arrange(desc(missing_percentage)) %>% 
+  filter(missing_percentage > 0)
+
+print(na_cols_train)
+
+tibble_ <- X_test_raw %>% filter(DAY_ID %in% ids_test)
+
+na_cols_test <- tibble(
+  column_names = names(tibble_),
+  missing_percentage = round(colMeans(is.na(tibble_)) * 100, 1)
+  ) %>% 
+  arrange(desc(missing_percentage)) %>% 
+  filter(missing_percentage > 0)
+
+print(na_cols_test)
+```
+
+To conclude, the lines that don't have duplicates in `DAY_ID` have NAs in the cols describing countries' net import and export and DE\<-\>FR exchange (`DE_FR_EXCHANGE`, `FR_DE_EXCHANGE`, `DE_NET_EXPORT`, `FR_NET_EXPORT`, `DE_NET_IMPORT`, `FR_NET_IMPORT`).
+
+And in duplicated lines?
+
+```{r}
+tibble_ <- X_train_raw %>% filter(!(DAY_ID %in% ids_train))
+
+na_cols_train <- tibble(
+  column_names = names(tibble_),
+  missing_percentage = round(colMeans(is.na(tibble_)) * 100, 1)
+  ) %>% 
+  arrange(desc(missing_percentage)) %>% 
+  filter(missing_percentage > 0)
+
+print(na_cols_train)
+
+tibble_ <- X_test_raw %>% filter(!(DAY_ID %in% ids_test))
+
+na_cols_test <- tibble(
+  column_names = names(tibble_),
+  missing_percentage = round(colMeans(is.na(tibble_)) * 100, 1)
+  ) %>% 
+  arrange(desc(missing_percentage)) %>% 
+  filter(missing_percentage > 0)
+
+print(na_cols_test)
+```
+
+The lines having duplicates in `DAY_ID` have NAs only in the cols describing countries' weather conditions (`DE_RAIN`, `FR_RAIN`, `DE_WIND`, `FR_WIND`, `DE_TEMP`, `FR_TEMP`).
+
+The two lists of columns above span all (12) the columns with missing values.
+
+## Are NAs simultaneously present in several cols for the same row ?
+
+Find the groups of columns that have simultaneously NAs in one row for the training set:
+
+```{r}
+missing_columns_list <- X_train_raw %>%
+  pmap(function(...) names(list(...))[sapply(list(...), is.na)]) %>% 
+  Filter(function(x) length(x) > 0, .) %>% 
+  unique(.)
+
+missing_columns_list
+```
+
+Same for the test set:
+
+```{r}
+X_test_raw %>%
+  pmap(function(...) names(list(...))[sapply(list(...), is.na)]) %>% 
+  Filter(function(x) length(x) > 0, .) %>% 
+  unique(.)
+```
+
+Apparently we get the same groups of columns.
+
+As a side note, the analysis above shows that the test set has the same properties as the training set and thus it is a representative sample of the data.
+
+To conclude the analysis above:
+
+-   The rows that **don't have** duplicates in the `DAY_ID` col have NAs in all 6 cols describing countries' weather conditions (`DE_RAIN`, `FR_RAIN`, `DE_WIND`, `FR_WIND`, `DE_TEMP`, `FR_TEMP`).
+-   The rows that **do have** duplicates in the `DAY_ID` col can have NAs simultaneously in the following groups of cols:
+    -   `DE_NET_EXPORT`, `DE_NET_IMPORT`
+    -   `DE_NET_EXPORT`, `FR_NET_EXPORT`, `DE_NET_IMPORT`, `FR_NET_IMPORT`
+    -   `DE_FR_EXCHANGE`, `FR_DE_EXCHANGE`, `DE_NET_EXPORT`, `FR_NET_EXPORT`, `DE_NET_IMPORT`, `FR_NET_IMPORT`
+
+## Correlation between vars
+
+Excluding vars `ID` and `DAY_ID` useless for the prediction and setting apart `COUNTRY`, we are left with numeric vars only.
+
+Pair corr matrix. I use Spearman corr to capture non-linear corrs.
+
+```{r}
+res <- cor(select(X_train_raw, -ID, -DAY_ID, -COUNTRY), method = "spearman", use = "complete.obs")
+
+res2 <- rcorr(as.matrix(select(X_train_raw, -ID, -DAY_ID, -COUNTRY)), type = "spearman")
+```
+
+Plot:
+
+```{r}
+corrplot(
+  res,
+  type = "upper",
+  order = "hclust", 
+  tl.col = "black",
+  tl.srt = 45,
+  tl.cex = 0.4)
+```
+
+Let's explore in more details the correlation matrix. For the convenience we will flatten it together with the matrix of p-values.
+
+```{r}
+# Code source: http://www.sthda.com/english/wiki/correlation-matrix-a-quick-start-guide-to-analyze-format-and-visualize-a-correlation-matrix-using-r-software#a-simple-function-to-format-the-correlation-matri
+# ++++++++++++++++++++++++++++
+# flattenCorrMatrix
+# ++++++++++++++++++++++++++++
+# cormat : matrix of the correlation coefficients
+# pmat : matrix of the correlation p-values
+flattenCorrMatrix <- function(cormat, pmat) {
+  ut <- upper.tri(cormat)
+  data.frame(
+    row = rownames(cormat)[row(cormat)[ut]],
+    column = rownames(cormat)[col(cormat)[ut]],
+    cor  =(cormat)[ut],
+    p = pmat[ut]
+    )
+}
+
+res2_flat <- flattenCorrMatrix(res2$r, res2$P) %>% 
+  mutate(cor = round(cor, 2), p = round(100 * p, 0)) %>% 
+  arrange(desc(abs(cor)))
+
+res2_flat
+```
+
+First we notice that all correlations with an absolute value greater than 0.07 are significant with p-value \< 1%.
+
+Other observations:
+
+1.  The following pairs of variables are all perfectly anti correlated: `DE_FR_EXCHANGE` vs `FR_DE_EXCHANGE`, `DE_NET_EXPORT` vs `DE_NET_IMPORT`, `FR_NET_EXPORT` vs `FR_NET_IMPORT`. Actually one variable in the pair is the inverse of another. The plot below shows all pair correlations between these variables. From it , and from the correlation matrix, we also notice that DE\<-\>FR exchange is strongly correlated with DE/FR net import/export. At the same time `DE_NET_IMPORT` and `FR_NET_IMPORT` are decorrelated.
+
+```{r}
+chart.Correlation(
+  select(X_train_raw, DE_FR_EXCHANGE, FR_DE_EXCHANGE, DE_NET_EXPORT, DE_NET_IMPORT, FR_NET_EXPORT, FR_NET_IMPORT), 
+  histogram=TRUE, 
+  pch=19)
+
+chart.Correlation(
+  select(X_train_raw, FR_DE_EXCHANGE, DE_NET_IMPORT, FR_NET_EXPORT), 
+  histogram=TRUE, 
+  pch=19)
+```
+
+Relation between FR/DE export, FR\<-\>DE exchange and FR/DE consumption (total and without renewable).
+
+-   Notice the difference in the relation between `FR_CONSUMPTION` and `FR_RESIDUAL_LOAD` versus `DE_CONSUMPTION` and `DE_RESIDUAL_LOAD`. Could it be attributed to the different proportion of the renewable sources in two countries?
+-   Weak but noticeable relation between e.g. `FR_DE_EXCHANGE` and `FR_CONSUMPTION`.
+
+```{r}
+chart.Correlation(
+  select(X_train_raw, FR_DE_EXCHANGE, DE_NET_EXPORT, FR_NET_EXPORT, FR_CONSUMPTION, DE_CONSUMPTION, FR_RESIDUAL_LOAD, DE_RESIDUAL_LOAD), 
+  histogram=TRUE, 
+  pch=19)
+```
+
+Relation between weather conditions in two countries. Rather strong correlation between temperature and wind in FR and DE, the amount of rain in two countries is essentially unrelated.
+
+```{r}
+chart.Correlation(
+  select(X_train_raw, DE_RAIN, FR_RAIN, DE_WIND, FR_WIND, DE_TEMP, FR_TEMP), 
+  histogram=TRUE, 
+  pch=19)
+```
+
+Relation between weather conditions and production of renewable energy in two countries.
+
+-   An odd relation between `x_WIND` and `x_WINDPOW` for both countries, as it consisted of two approx linear relations with different slopes.
+-   For both countries, there may be a steep anti correlation between amount of rain and solar energy production. However, the distribution of x_RAIN values has a long high-end wing that may hinder this relation.
+
+```{r}
+chart.Correlation(
+  select(X_train_raw, FR_RAIN, FR_WIND, FR_TEMP, FR_SOLAR, FR_WINDPOW, FR_HYDRO), 
+  histogram=TRUE, 
+  pch=19)
+
+chart.Correlation(
+  select(X_train_raw, DE_RAIN, DE_WIND, DE_TEMP, DE_SOLAR, DE_WINDPOW, DE_HYDRO), 
+  histogram=TRUE, 
+  pch=19)
+```
+
+Relations between countries' consumption rates, exchange between them and whether conditions.
+
+No clear relationship between any of the pair of variables.
+
+```{r}
+chart.Correlation(
+  select(X_train_raw, FR_CONSUMPTION, FR_RESIDUAL_LOAD, FR_DE_EXCHANGE, FR_NET_EXPORT, FR_RAIN, FR_WIND, FR_TEMP), 
+  histogram=TRUE, 
+  pch=19)
+```
+
+Correlation between consumption and production.
+
+```{r}
+chart.Correlation(
+  select(X_train_raw, FR_CONSUMPTION, FR_RESIDUAL_LOAD, FR_GAS, FR_COAL, FR_NUCLEAR), 
+  histogram=TRUE, 
+  pch=19)
+```
+
+## Relations between explanatory vars and target
+
+We exclude from the analysis `ID`, `DAY_ID` and perfectly correlated vars `DE_FR_EXCHANGE`, `FR_NET_IMPORT`, `DE_NET_IMPORT`.
+
+For both countries there is no clear relationship between any of the explanatory variable and target.
+
+For France:
+
+```{r}
+# Merge the two tibbles based on a common identifier
+merged_tibble <- left_join(X_train_raw, y_train, by = "ID") %>% 
+  filter(COUNTRY == "FR") %>% 
+  select(-ID, -DAY_ID, -COUNTRY, -DE_FR_EXCHANGE, -FR_NET_IMPORT, -DE_NET_IMPORT)
+
+# Create a vector of explanatory variable names
+explanatory_vars <- colnames(select(merged_tibble, -TARGET))
+
+# Generate scatter plots for each explanatory variable
+for (var in colnames(select(merged_tibble, -TARGET))) {
+  res <- ggplot(merged_tibble, aes_string(x = var, y = "TARGET")) +
+    geom_point() +
+    geom_smooth(method = "loess", se = FALSE, color = "red", span = 0.9) +
+    labs(x = var, y = "Target Variable") +
+    ggtitle(paste("Scatter Plot of", var, "vs. Target Variable for FR"))
+  print(res)
+}
+
+```
+
+For Germany:
+
+```{r}
+# Merge the two tibbles based on a common identifier
+merged_tibble <- left_join(X_train_raw, y_train, by = "ID") %>% 
+  filter(COUNTRY == "DE") %>% 
+  select(-ID, -DAY_ID, -COUNTRY, -DE_FR_EXCHANGE, -FR_NET_IMPORT, -DE_NET_IMPORT)
+
+# Create a vector of explanatory variable names
+explanatory_vars <- colnames(select(merged_tibble, -TARGET))
+
+# Generate scatter plots for each explanatory variable
+for (var in colnames(select(merged_tibble, -TARGET))) {
+  res <- ggplot(merged_tibble, aes_string(x = var, y = "TARGET")) +
+    geom_point() +
+    geom_smooth(method = "loess", se = FALSE, color = "red", span = 0.9) +
+    labs(x = var, y = "Target Variable") +
+    ggtitle(paste("Scatter Plot of", var, "vs. Target Variable for DE"))
+  print(res)
+}
+
+```
+
+Both countries together:
+
+```{r}
+# Merge the two tibbles based on a common identifier
+merged_tibble <- left_join(X_train_raw, y_train, by = "ID") %>% 
+  select(-ID, -DAY_ID, -COUNTRY, -DE_FR_EXCHANGE, -FR_NET_IMPORT, -DE_NET_IMPORT)
+
+# Create a vector of explanatory variable names
+explanatory_vars <- colnames(select(merged_tibble, -TARGET))
+
+# Generate scatter plots for each explanatory variable
+for (var in colnames(select(merged_tibble, -TARGET))) {
+  res <- ggplot(merged_tibble, aes_string(x = var, y = "TARGET")) +
+    geom_point() +
+    geom_smooth(method = "loess", se = FALSE, color = "red", span = 0.9) +
+    labs(x = var, y = "Target Variable") +
+    ggtitle(paste("Scatter Plot of", var, "vs. Target Variable for DE"))
+  print(res)
+}
+```
+
+## Value distribution for the explanatory and target vars
+
+For France.
+
+Notice the distribution of `x_CONSUMPTION`, `x_COAL`, `x_GAZ` and `x_NUCLEAR` and the difference in these distribs for the two countries.
+
+```{r}
+# Merge the two tibbles based on a common identifier
+merged_tibble <- X_train_raw %>% 
+  filter(COUNTRY == "FR") %>% 
+  select(-ID, -DAY_ID, -COUNTRY, -DE_FR_EXCHANGE, -FR_NET_IMPORT, -DE_NET_IMPORT)
+
+# Generate hist for each explanatory variable
+for (var in colnames(merged_tibble)) {
+  res <- ggplot(merged_tibble, aes_string(x = var)) +
+    geom_histogram() +
+    ggtitle(paste(var, " for FR"))
+  print(res)
+}
+```
+
+For Germany only the TARGET distribution is different, all other cols are identical to France:
+
+```{r}
+# Merge the two tibbles based on a common identifier
+merged_tibble <- left_join(X_train_raw, y_train, by = "ID") %>% 
+  filter(COUNTRY == "DE") %>% 
+  select(-ID, -DAY_ID, -COUNTRY, -DE_FR_EXCHANGE, -FR_NET_IMPORT, -DE_NET_IMPORT)
+
+res <- ggplot() +
+  geom_histogram(aes(x = y_train[X_train_raw$COUNTRY == "FR", "TARGET"], y = stat(count / sum(count))), fill = "blue", alpha = 0.5) +
+  geom_histogram(aes(x = y_train[X_train_raw$COUNTRY == "DE", "TARGET"], y = stat(count / sum(count))), fill = "red", alpha = 0.5) +
+  labs(title = "TARGET for FR and DE", x = "TARGET") + 
+  scale_fill_manual(values = c("blue", "red"), labels = c("TARGET FR", "TARGET DE"))
+print(res)
+
+```
+
+## TARGET FR vs TARGET DE
+
+No clear relation between target values for the same day for the two countries.
+
+```{r}
+rearranged_data <- left_join(X_train_raw, y_train, by = "ID") %>% 
+  select(DAY_ID, COUNTRY, TARGET) %>%
+  pivot_wider(names_from = COUNTRY, values_from = TARGET, values_fill = NA) %>%
+  drop_na()
+
+# Display the rearranged table
+rearranged_data
+
+res <- ggplot(rearranged_data) +
+  geom_point(aes(x = FR, y = DE)) +
+  labs(x = "TARGET FR", y = "TARGET DE")
+print(res)
+```
+
+## TARGET distribution for missing and non-missing vals
+
+We consider all 12 variables that have missing values and plot a histogram of TARGET values for each of them for the rows with and without missing values. We plot these histograms separately for FR and DE.
+
+First, for FR. Apparently the presence of missing values is not related to the TARGET value.
+
+```{r}
+df <- X_train_raw %>% 
+  filter(COUNTRY == "FR") %>% 
+  select(
+    FR_DE_EXCHANGE, 
+    FR_NET_EXPORT, 
+    DE_NET_IMPORT, 
+    DE_RAIN, 
+    FR_RAIN, 
+    DE_WIND, 
+    FR_WIND, 
+    DE_TEMP, 
+    FR_TEMP)
+
+# Generate hist for each explanatory variable
+for (var in colnames(df)) {
+  mask <- df %>% select(., all_of(var)) %>% is.na()
+  res <- ggplot() +
+    geom_histogram(aes(x = y_train[!mask, "TARGET"], y = stat(count / sum(count))), fill="blue", alpha = 0.5) +
+    geom_histogram(aes(x = y_train[mask, "TARGET"], y = stat(count / sum(count))), fill="red", alpha = 0.5) +
+    ggtitle(paste(var, " for FR"))
+  print(res)
+}
+```
+
+For DE. SAme conclusion: no clear relation between the presence of missing values and TARGET. Note that the absence of missing values for `FR_DE_EXCHANGE`, `FR_NET_EXPORT`, `DE_NET_IMPORT` is in line with the previous analysis (DE lines always have a duplicate `DAY_ID` for FR).
+
+```{r}
+df <- X_train_raw %>% 
+  filter(COUNTRY == "DE") %>% 
+  select(
+    FR_DE_EXCHANGE, 
+    FR_NET_EXPORT, 
+    DE_NET_IMPORT, 
+    DE_RAIN, 
+    FR_RAIN, 
+    DE_WIND, 
+    FR_WIND, 
+    DE_TEMP, 
+    FR_TEMP)
+
+# Generate hist for each explanatory variable
+for (var in colnames(df)) {
+  mask <- df %>% select(., all_of(var)) %>% is.na()
+  res <- ggplot() +
+    geom_histogram(aes(x = y_train[!mask, "TARGET"], y = stat(count / sum(count))), fill="blue", alpha = 0.5) +
+    geom_histogram(aes(x = y_train[mask, "TARGET"], y = stat(count / sum(count))), fill="red", alpha = 0.5) +
+    ggtitle(paste(var, " for DE"))
+  print(res)
+}
+```
+
+## Feature interactions
+
+Heat maps with color code corresponding to the mean TARGET per bin and text - number of examples per bin.
+
+```{r}
+plot_var_interaction <- function(df, col1, col2, country, target = "TARGET", nbins = 5) {
+  
+  # Create bins and calculate mean TARGET and count for each bin
+  summary_data <- df %>%
+    filter(COUNTRY == country) %>% 
+    select(col1, col2, target) %>% 
+    mutate(
+      col1_bin = cut(!!sym(col1), breaks = nbins),
+      col2_bin = cut(!!sym(col2), breaks = nbins)
+    ) %>%
+    group_by(col1_bin, col2_bin) %>%
+    summarise(mean_target = mean(!!sym(target), na.rm = TRUE), count_target = n())
+  
+  # Draw the two-dimensional histogram with colored bins
+  result <- ggplot(summary_data, aes(x = col1_bin, y = col2_bin)) +
+    geom_tile(aes(fill = mean_target)) +
+    geom_text(aes(label = count_target), color = "white", size = 4) +
+    scale_fill_gradient(low = "blue", high = "red")  +
+    labs(x = col1, y = col2)
+
+  print(result)
+}
+```
+
+There is no visible trend in the interaction between `FR_NUCLEAR` and `FR_CONSUMPTION`:
+
+```{r}
+col1 <- "FR_NUCLEAR"
+col2 <- "FR_CONSUMPTION"
+country = "FR"
+plot_var_interaction(left_join(X_train_raw, y_train, by = "ID"), col1, col2, country)
+
+col1 <- "DE_NUCLEAR"
+col2 <- "DE_CONSUMPTION"
+country = "DE"
+plot_var_interaction(left_join(X_train_raw, y_train, by = "ID"), col1, col2, country)
+```
+
+Nor there is any trend in the interaction between `FR_NUCLEAR` and `FR_RESIDUAL_LOAD`:
+
+```{r}
+col1 <- "FR_NUCLEAR"
+col2 <- "FR_RESIDUAL_LOAD"
+country = "FR"
+plot_var_interaction(left_join(X_train_raw, y_train, by = "ID"), col1, col2, country)
+
+col1 <- "DE_NUCLEAR"
+col2 <- "DE_RESIDUAL_LOAD"
+country = "DE"
+plot_var_interaction(left_join(X_train_raw, y_train, by = "ID"), col1, col2, country)
+```
+
+```{r}
+col1 <- "FR_GAS"
+col2 <- "FR_RESIDUAL_LOAD"
+country = "FR"
+plot_var_interaction(left_join(X_train_raw, y_train, by = "ID"), col1, col2, country)
+
+col1 <- "DE_GAS"
+col2 <- "DE_RESIDUAL_LOAD"
+country = "DE"
+plot_var_interaction(left_join(X_train_raw, y_train, by = "ID"), col1, col2, country)
+```
+
+```{r}
+col1 <- "FR_COAL"
+col2 <- "FR_RESIDUAL_LOAD"
+country = "FR"
+plot_var_interaction(left_join(X_train_raw, y_train, by = "ID"), col1, col2, country)
+
+col1 <- "DE_COAL"
+col2 <- "DE_RESIDUAL_LOAD"
+country = "DE"
+plot_var_interaction(left_join(X_train_raw, y_train, by = "ID"), col1, col2, country)
+```
+
+```{r}
+col1 <- "FR_DE_EXCHANGE"
+col2 <- "FR_RESIDUAL_LOAD"
+country = "FR"
+plot_var_interaction(left_join(X_train_raw, y_train, by = "ID"), col1, col2, country)
+
+col1 <- "FR_DE_EXCHANGE"
+col2 <- "DE_RESIDUAL_LOAD"
+country = "DE"
+plot_var_interaction(left_join(X_train_raw, y_train, by = "ID"), col1, col2, country)
+```
+
+```{r}
+col1 <- "FR_NUCLEAR"
+col2 <- "FR_GAS"
+country = "FR"
+plot_var_interaction(left_join(X_train_raw, y_train, by = "ID"), col1, col2, country)
+
+col1 <- "DE_NUCLEAR"
+col2 <- "DE_GAS"
+country = "DE"
+plot_var_interaction(left_join(X_train_raw, y_train, by = "ID"), col1, col2, country)
+```
+
+```{r}
+col1 <- "FR_NUCLEAR"
+col2 <- "FR_COAL"
+country = "FR"
+plot_var_interaction(left_join(X_train_raw, y_train, by = "ID"), col1, col2, country)
+
+col1 <- "DE_NUCLEAR"
+col2 <- "DE_COAL"
+country = "DE"
+plot_var_interaction(left_join(X_train_raw, y_train, by = "ID"), col1, col2, country)
+```
+
+There is not enough stats to evidence the pattern visible in the interaction between `GAS_RET` and `CARBON_RET`:
+
+```{r}
+col1 <- "GAS_RET"
+col2 <- "CARBON_RET"
+country = "FR"
+plot_var_interaction(left_join(X_train_raw, y_train, by = "ID"), col1, col2, country)
+
+country = "DE"
+plot_var_interaction(left_join(X_train_raw, y_train, by = "ID"), col1, col2, country)
+```
+
+Same for the interaction between `COAL_RET` and `CARBON_RET`:
+
+```{r}
+col1 <- "COAL_RET"
+col2 <- "CARBON_RET"
+country = "FR"
+plot_var_interaction(left_join(X_train_raw, y_train, by = "ID"), col1, col2, country)
+
+country = "DE"
+plot_var_interaction(left_join(X_train_raw, y_train, by = "ID"), col1, col2, country)
+```
+
+Idem for the interaction between `COAL_RET` and `GAS_RET`:
+
+```{r}
+col1 <- "COAL_RET"
+col2 <- "GAS_RET"
+country = "FR"
+plot_var_interaction(left_join(X_train_raw, y_train, by = "ID"), col1, col2, country)
+
+country = "DE"
+plot_var_interaction(left_join(X_train_raw, y_train, by = "ID"), col1, col2, country)
+```
+
+Idem:
+
+```{r}
+col1 <- "FR_GAS"
+col2 <- "GAS_RET"
+country = "FR"
+plot_var_interaction(left_join(X_train_raw, y_train, by = "ID"), col1, col2, country)
+
+col1 <- "DE_GAS"
+col2 <- "GAS_RET"
+country = "DE"
+plot_var_interaction(left_join(X_train_raw, y_train, by = "ID"), col1, col2, country)
+```
+
+Idem:
+
+```{r}
+col1 <- "FR_COAL"
+col2 <- "COAL_RET"
+country = "FR"
+plot_var_interaction(left_join(X_train_raw, y_train, by = "ID"), col1, col2, country)
+
+col1 <- "DE_COAL"
+col2 <- "COAL_RET"
+country = "DE"
+plot_var_interaction(left_join(X_train_raw, y_train, by = "ID"), col1, col2, country)
+```
+
+```{r}
+col1 <- "FR_GAS"
+col2 <- "FR_NUCLEAR"
+country = "FR"
+target <- "TARGET"
+
+# Merge the two tibbles based on a common identifier
+merged_tibble <- left_join(X_train_raw, y_train, by = "ID") %>% 
+  filter(COUNTRY == country) %>% 
+  select(!!sym(col1), !!sym(col2), !!sym(target))
+
+res <- ggplot(merged_tibble) +
+  geom_point(aes(x = !!sym(col1), y = !!sym(col2), color = !!sym(target)), size = 1, alpha = 0.9) +
+  scale_color_viridis_c("Taux de chômage", option = "plasma")
+print(res)
+
+col1 <- "FR_COAL"
+col2 <- "FR_NUCLEAR"
+country = "FR"
+target <- "TARGET"
+
+# Merge the two tibbles based on a common identifier
+merged_tibble <- left_join(X_train_raw, y_train, by = "ID") %>% 
+  filter(COUNTRY == country) %>% 
+  select(!!sym(col1), !!sym(col2), !!sym(target))
+
+res <- ggplot(merged_tibble) +
+  geom_point(aes(x = !!sym(col1), y = !!sym(col2), color = !!sym(target)), size = 1, alpha = 0.9) +
+  scale_color_viridis_c("Taux de chômage", option = "plasma")
+print(res)
+
+col1 <- "DE_GAS"
+col2 <- "DE_NUCLEAR"
+country = "DE"
+target <- "TARGET"
+
+# Merge the two tibbles based on a common identifier
+merged_tibble <- left_join(X_train_raw, y_train, by = "ID") %>% 
+  filter(COUNTRY == country) %>% 
+  select(!!sym(col1), !!sym(col2), !!sym(target))
+
+res <- ggplot(merged_tibble) +
+  geom_point(aes(x = !!sym(col1), y = !!sym(col2), color = !!sym(target)), size = 1, alpha = 0.9) +
+  scale_color_viridis_c("Taux de chômage", option = "plasma")
+print(res)
+
+col1 <- "DE_COAL"
+col2 <- "DE_NUCLEAR"
+country = "DE"
+target <- "TARGET"
+
+# Merge the two tibbles based on a common identifier
+merged_tibble <- left_join(X_train_raw, y_train, by = "ID") %>% 
+  filter(COUNTRY == country) %>% 
+  select(!!sym(col1), !!sym(col2), !!sym(target))
+
+res <- ggplot(merged_tibble) +
+  geom_point(aes(x = !!sym(col1), y = !!sym(col2), color = !!sym(target)), size = 1, alpha = 0.9) +
+  scale_color_viridis_c("Taux de chômage", option = "plasma")
+print(res)
+```
+
+```{r}
+col1 <- "FR_COAL"
+col2 <- "COAL_RET"
+country = "FR"
+target <- "TARGET"
+
+# Merge the two tibbles based on a common identifier
+merged_tibble <- left_join(X_train_raw, y_train, by = "ID") %>% 
+  filter(COUNTRY == country) %>% 
+  select(!!sym(col1), !!sym(col2), !!sym(target))
+
+res <- ggplot(merged_tibble) +
+  geom_point(aes(x = !!sym(col1), y = !!sym(col2), color = !!sym(target)), size = 2, alpha = 0.9) +
+  scale_color_viridis_c("Taux de chômage", option = "plasma")
+print(res)
+
+```
+
+```{r}
+col1 <- "FR_COAL"
+col2 <- "CARBON_RET"
+country = "FR"
+target <- "TARGET"
+
+# Merge the two tibbles based on a common identifier
+merged_tibble <- left_join(X_train_raw, y_train, by = "ID") %>% 
+  filter(COUNTRY == country) %>% 
+  select(!!sym(col1), !!sym(col2), !!sym(target))
+
+res <- ggplot(merged_tibble) +
+  geom_point(aes(x = !!sym(col1), y = !!sym(col2), color = !!sym(target)), size = 2, alpha = 0.9) +
+  scale_color_viridis_c("Taux de chômage", option = "plasma")
+print(res)
+
+```
+
+## dTARGET as target
+
+```{r}
+day_ids <- X_train_raw%>% 
+  filter(COUNTRY == "DE") %>% 
+  pull(DAY_ID)
+
+mask_fr_ids <- (X_train_raw$DAY_ID %in% day_ids) & (X_train_raw$COUNTRY == "FR")
+
+mask_de_ids <- (X_train_raw$DAY_ID %in% day_ids) & (X_train_raw$COUNTRY == "DE")
+
+merged_tibble <- X_train_raw[mask_fr_ids,] %>%
+  select(-ID, -DAY_ID, -COUNTRY, -DE_FR_EXCHANGE, -FR_NET_IMPORT, -DE_NET_IMPORT)
+
+merged_tibble$delta_TARGET <- y_train[mask_fr_ids, "TARGET"] - y_train[mask_de_ids, "TARGET"]
+
+# Generate scatter plots for each explanatory variable
+for (var in colnames(select(merged_tibble, -delta_TARGET))) {
+  res <- ggplot(merged_tibble, aes_string(x = var, y = "delta_TARGET")) +
+    geom_point() +
+    geom_smooth(method = "loess", se = FALSE, color = "red", span = 0.9) +
+    labs(x = var, y = "delta Target Variable") +
+    ggtitle(paste("Scatter Plot of", var, "vs. delta Target Variable"))
+  print(res)
+}
+
+```
+
 # Reproduce benchmark
+
+## Data preparation
 
 Fill-in NAs:
 
@@ -90,11 +982,23 @@ X_train <- X_train %>% select(-COUNTRY)
 X_test <- X_test %>% select(-COUNTRY)
 ```
 
+## Model
+
 Fit OLS:
 
 ```{r}
 lm_ <- lm(y_train$TARGET ~ ., data = X_train)
 ```
+
+## FEature importance
+
+```{r}
+coef(lm_) %>% 
+  enframe(., name = "Names", value = "Values") %>% 
+  arrange(desc(abs(Values)))
+```
+
+## Comparison of Py and R OLS
 
 Compare with the OLS model in Py benchmlark notebook:
 
@@ -115,6 +1019,10 @@ lm_join_$equal <- near(py_lm_$val, r_lm_$val)
 lm_join_
 ```
 
+Except few variables (`DE_FR_EXCHANGE` (different), `FR_DE_EXCHANGE` (NA), `DE_NET_EXPORT` (different),`FR_NET_EXPORT` (different), `DE_NET_IMPORT`(NA), `FR_NET_IMPORT` (NA)), the coefficients of the models are the same. For the coefficients that differ, the reason is that OLS in R has automatically detected highly correlated variables and excluded them from the model, thus some of the coefficients are NAs and others are different.
+
+## Model prediction and export results
+
 Predict:
 
 ```{r}
@@ -127,6 +1035,8 @@ Spearman correlation for the predictions on the training set:
 ```{r}
 cor(y_train$TARGET, y_hat_train, method = "spearman")
 ```
+
+This correlation value is the same as the one of the Py benchmark model.
 
 Export predictions on the test set:
 
