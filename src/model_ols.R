@@ -2,15 +2,25 @@
 source("./src/data_preprocessing.R")
 
 # fit OLS
-model <- lm(y_train$TARGET ~ ., data = X_train)
+model_FR <- lm(y_train[mask_train_FR, "TARGET"] ~ ., data = X_train[mask_train_FR, ])
+model_DE <- lm(y_train[!mask_train_FR, "TARGET"] ~ ., data = X_train[!mask_train_FR, ])
 
 # predict
-y_hat_train <- predict(model, X_train)
-y_hat_test <- predict(model, X_test)
+y_hat_train <- vector(mode="numeric", length=nrow(X_train_raw))
+y_hat_test <- vector(mode="numeric", length=nrow(X_test_raw))
+
+y_hat_train[mask_train_FR] <- predict(model_FR, X_train[mask_train_FR, ])
+y_hat_train[!mask_train_FR] <- predict(model_DE, X_train[!mask_train_FR, ])
+
+y_hat_test[mask_test_FR] <- predict(model_FR, X_test[mask_test_FR, ])
+y_hat_test[!mask_test_FR] <- predict(model_DE, X_test[!mask_test_FR, ])
 
 # Spearman correlation for the predictions on the training set
-cor_train <- cor(y_train$TARGET, y_hat_train, method = "spearman") %>% 
-  round(., 3)
+cor_train_FR <- cor(y_train[mask_train_FR, "TARGET"], y_hat_train[mask_train_FR], method = "spearman") %>% round(., 3)
+cor_train_DE <- cor(y_train[!mask_train_FR, "TARGET"], y_hat_train[!mask_train_FR], method = "spearman") %>% round(., 3)
+cor_train <- cor(y_train$TARGET, y_hat_train, method = "spearman") %>% round(., 3)
+print(paste("Spearman corr on training set for FR: ", cor_train_FR))
+print(paste("Spearman corr on training set for DE: ", cor_train_DE))
 print(paste("Spearman corr on training set: ", cor_train))
 
 # export predictions on the test set
