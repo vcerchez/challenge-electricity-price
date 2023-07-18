@@ -9,8 +9,8 @@ output:
 
 Model:
 
-1.    use dedicated models for FR and DE
-1.    Drop useless cols `ID` and `DAY_ID`
+1.    ~~use dedicated models for FR and DE~~
+1.    ~~Drop useless cols `ID` and `DAY_ID`~~
 1.    Impute NAs
 1.    Regularize
 1.    Try GAM
