@@ -12,7 +12,7 @@ dtrain_FR <- xgb.DMatrix(data = as.matrix(X_train[mask_train_FR, ]), label = y_t
 dtrain_DE <- xgb.DMatrix(data = as.matrix(X_train[!mask_train_FR, ]), label = y_train[!mask_train_FR, "TARGET"])
 
 # cross-validation
-params_xgb <- list(max_depth = 2, eta = 0.01, nthread = 1, 
+params_xgb <- list(max_depth = 2, eta = 0.01, nthread = 1, min_child_weight = 10,
                    objective = "reg:squarederror")
 cv_FR <- xgb.cv(params = params_xgb, data = dtrain_FR, nrounds = 1000, nfold = 5, print_every_n = 10, early_stopping_rounds = 50)
 cv_DE <- xgb.cv(params = params_xgb, data = dtrain_DE, nrounds = 1000, nfold = 5, print_every_n = 10, early_stopping_rounds = 50)
