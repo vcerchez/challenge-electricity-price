@@ -1,9 +1,9 @@
 ## Model improvement:
 1.    ~~use dedicated models for FR and DE~~
 1.    ~~Drop useless cols `ID` and `DAY_ID`~~
-1. Test score of single xgboost model with `min_child_weight = 10` (commit fc881812f34d03850896307d015e9ae13df80c8b).
-1. Plot ordered Y and Y_hat orderd by Y to see where the model makes mistakes.
-1. Make a single model for FR and DE but include `COUNTRY` var.
+1. ~~Test score of single xgboost model with `min_child_weight = 10` (commit fc881812f34d03850896307d015e9ae13df80c8b).~~
+1. ~~Plot ordered Y and Y_hat orderd by Y to see where the model makes mistakes.~~
+1. ~~Make a single model for FR and DE but include `COUNTRY` var.~~
 1. Missing vals imputation.
 
     The following vars have most of NAs and are corelated with other vars having no missing vals:
