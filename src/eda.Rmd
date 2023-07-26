@@ -7,16 +7,6 @@ output:
 
 # TODO:
 
-Model:
-
-1.    ~~use dedicated models for FR and DE~~
-1.    ~~Drop useless cols `ID` and `DAY_ID`~~
-1.    Impute NAs
-1.    Regularize
-1.    Try GAM
-1.    Try tree based models
-1.    Reverse date anonymization
-
 EDA:
 
 1.  ~~investigate correlations between vars~~
