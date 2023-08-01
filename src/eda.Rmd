@@ -1,8 +1,11 @@
 ---
 title: "EDA"
 output:
-  html_document:
+  github_document:
     df_print: paged
+    html_preview: false
+    toc: true
+    toc_depth: 2
 ---
 
 # TODO:
