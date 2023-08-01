@@ -2,24 +2,16 @@
 title: "EDA"
 output:
   github_document:
-    df_print: paged
     html_preview: false
     toc: true
     toc_depth: 2
 ---
 
-# TODO:
-
-EDA:
-
-1.  ~~investigate correlations between vars~~
-2.  ~~`TARGET`-vars correlation~~
-3.  ~~duplicates among lines, meaning of country label and country prefix in var names~~
-4.  ~~are NAs simultaneously present in several cols for the same row ?~~
-
 # Import libraries
 
 ```{r}
+# turn off warnings globally
+options(warn=-1)
 library(readr)
 library(dplyr)
 library(tidyr)
@@ -42,27 +34,20 @@ y_train <- read.csv("../data/y_train.csv")
 Shape of the data sets:
 
 ```{r}
-print("X train:", )
-dim(X_train_raw)
-
-print("X test:", )
-dim(X_test_raw)
-
-print("y train:", )
-dim(y_train)
+print(paste("X train nrow = ", nrow(X_train_raw), ", ncol = ", ncol(X_train_raw), sep = ""), quote = FALSE)
+print(paste("X test nrow = ", nrow(X_test_raw), ", ncol = ", ncol(X_test_raw), sep = ""), quote = FALSE)
+print(paste("y train nrow = ", nrow(y_train), ", ncol = ", ncol(y_train), sep = ""), quote = FALSE)
 ```
 
 # EDA
 
 ## ID alignement in X and y
 
-Are samples' IDs in X and y aligned? Number of misaligned rows:
+Are samples' IDs in X and y aligned?
 
 ```{r}
-sum(X_train_raw$ID != y_train$ID)
+print(paste("Number of misaligned rows:", sum(X_train_raw$ID != y_train$ID)), quote = FALSE)
 ```
-
-Yes, they are.
 
 ## Missing vals by variable
 
@@ -78,7 +63,7 @@ na_cols_train <- tibble(
   arrange(desc(missing_percentage)) %>% 
   filter(missing_percentage > 0)
 
-na_cols_train
+print(na_cols_train, quote = FALSE)
 ```
 
 Test set:
@@ -93,17 +78,14 @@ na_cols_test <- tibble(
   arrange(desc(missing_percentage)) %>% 
   filter(missing_percentage > 0)
 
-na_cols_test
+print(na_cols_test, quotes = FALSE)
 ```
 
 Are cols with NAs the same in training and test sets?
 
 ```{r}
-print("In train set only:")
-print(setdiff(na_cols_train$column_names, na_cols_test$column_names))
-
-print("In test set only:")
-print(setdiff(na_cols_test$column_names, na_cols_train$column_names))
+print(paste("In train set only:", setdiff(na_cols_train$column_names, na_cols_test$column_names)), quotes = FALSE)
+print(paste("In test set only:", setdiff(na_cols_test$column_names, na_cols_train$column_names)), quotes = FALSE)
 ```
 
 ## Variables dtypes
@@ -119,9 +101,11 @@ str(X_train_raw)
 Value counts in the `COUNTRY` column:
 
 ```{r}
-X_train_raw %>%
-  count(COUNTRY) %>%
-  mutate(percentage = round(n / sum(n) * 100, 1))
+print(
+  X_train_raw %>%
+    count(COUNTRY) %>%
+    mutate(percentage = round(n / sum(n) * 100, 1))
+)
 ```
 
 The data describes two countries, FR and DE, roughly equally presented.
@@ -129,13 +113,15 @@ The data describes two countries, FR and DE, roughly equally presented.
 Duplicates among `DAY_ID` in the training set:
 
 ```{r}
-X_train_raw %>%
-  count(DAY_ID) %>%
-  mutate(n = n - 1) %>% 
-  rename(num_of_duplicates = n) %>% 
-  count(num_of_duplicates) %>% 
-  rename(count = n) %>% 
-  mutate(percentage = round(count / sum(count) * 100, 1))
+print(
+  X_train_raw %>%
+    count(DAY_ID) %>%
+    mutate(n = n - 1) %>% 
+    rename(num_of_duplicates = n) %>% 
+    count(num_of_duplicates) %>% 
+    rename(count = n) %>% 
+    mutate(percentage = round(count / sum(count) * 100, 1))
+)
 ```
 
 Most of the lines (3/4) have duplicates.
@@ -145,13 +131,15 @@ Most of the lines (3/4) have duplicates.
 Duplicates among `DAY_ID` in the test set:
 
 ```{r}
-X_test_raw %>%
-  count(DAY_ID) %>%
-  mutate(n = n - 1) %>% 
-  rename(num_of_duplicates = n) %>% 
-  count(num_of_duplicates) %>% 
-  rename(count = n) %>% 
-  mutate(percentage = round(count / sum(count) * 100, 1))
+print(
+  X_test_raw %>%
+    count(DAY_ID) %>%
+    mutate(n = n - 1) %>% 
+    rename(num_of_duplicates = n) %>% 
+    count(num_of_duplicates) %>% 
+    rename(count = n) %>% 
+    mutate(percentage = round(count / sum(count) * 100, 1))
+)
 ```
 
 The number of duplicates is more or less the same as in the training set.
@@ -183,7 +171,7 @@ ids <- tibble_ %>%
 # different values in the pair of duplicated rows, drop duplicates
 results <- lapply(ids, non_duplicated_cols) %>% unique()
 
-results
+print(results)
 ```
 
 Same question for the test set (no `TARGET`):
@@ -212,7 +200,7 @@ ids <- tibble_ %>%
 # different values in the pair of duplicated rows, drop duplicates
 results <- lapply(ids, non_duplicated_cols) %>% unique()
 
-results
+print(results)
 ```
 
 Thus the rows having the same value of `DAY_ID` differ only by `ID` (obviously), `COUNTRY` (FR or DE) and `TARGET` (prediction for FR or DE). For the rest they are identical.
@@ -383,7 +371,7 @@ res2_flat <- flattenCorrMatrix(res2$r, res2$P) %>%
   mutate(cor = round(cor, 2), p = round(100 * p, 0)) %>% 
   arrange(desc(abs(cor)))
 
-res2_flat
+print(res2_flat)
 ```
 
 First we notice that all correlations with an absolute value greater than 0.07 are significant with p-value \< 1%.
@@ -584,7 +572,7 @@ rearranged_data <- left_join(X_train_raw, y_train, by = "ID") %>%
   drop_na()
 
 # Display the rearranged table
-rearranged_data
+print(rearranged_data)
 
 res <- ggplot(rearranged_data) +
   geom_point(aes(x = FR, y = DE)) +
@@ -831,104 +819,6 @@ country = "DE"
 plot_var_interaction(left_join(X_train_raw, y_train, by = "ID"), col1, col2, country)
 ```
 
-```{r}
-col1 <- "FR_GAS"
-col2 <- "FR_NUCLEAR"
-country = "FR"
-target <- "TARGET"
-
-# Merge the two tibbles based on a common identifier
-merged_tibble <- left_join(X_train_raw, y_train, by = "ID") %>% 
-  filter(COUNTRY == country) %>% 
-  select(!!sym(col1), !!sym(col2), !!sym(target))
-
-res <- ggplot(merged_tibble) +
-  geom_point(aes(x = !!sym(col1), y = !!sym(col2), color = !!sym(target)), size = 1, alpha = 0.9) +
-  scale_color_viridis_c("Taux de chômage", option = "plasma")
-print(res)
-
-col1 <- "FR_COAL"
-col2 <- "FR_NUCLEAR"
-country = "FR"
-target <- "TARGET"
-
-# Merge the two tibbles based on a common identifier
-merged_tibble <- left_join(X_train_raw, y_train, by = "ID") %>% 
-  filter(COUNTRY == country) %>% 
-  select(!!sym(col1), !!sym(col2), !!sym(target))
-
-res <- ggplot(merged_tibble) +
-  geom_point(aes(x = !!sym(col1), y = !!sym(col2), color = !!sym(target)), size = 1, alpha = 0.9) +
-  scale_color_viridis_c("Taux de chômage", option = "plasma")
-print(res)
-
-col1 <- "DE_GAS"
-col2 <- "DE_NUCLEAR"
-country = "DE"
-target <- "TARGET"
-
-# Merge the two tibbles based on a common identifier
-merged_tibble <- left_join(X_train_raw, y_train, by = "ID") %>% 
-  filter(COUNTRY == country) %>% 
-  select(!!sym(col1), !!sym(col2), !!sym(target))
-
-res <- ggplot(merged_tibble) +
-  geom_point(aes(x = !!sym(col1), y = !!sym(col2), color = !!sym(target)), size = 1, alpha = 0.9) +
-  scale_color_viridis_c("Taux de chômage", option = "plasma")
-print(res)
-
-col1 <- "DE_COAL"
-col2 <- "DE_NUCLEAR"
-country = "DE"
-target <- "TARGET"
-
-# Merge the two tibbles based on a common identifier
-merged_tibble <- left_join(X_train_raw, y_train, by = "ID") %>% 
-  filter(COUNTRY == country) %>% 
-  select(!!sym(col1), !!sym(col2), !!sym(target))
-
-res <- ggplot(merged_tibble) +
-  geom_point(aes(x = !!sym(col1), y = !!sym(col2), color = !!sym(target)), size = 1, alpha = 0.9) +
-  scale_color_viridis_c("Taux de chômage", option = "plasma")
-print(res)
-```
-
-```{r}
-col1 <- "FR_COAL"
-col2 <- "COAL_RET"
-country = "FR"
-target <- "TARGET"
-
-# Merge the two tibbles based on a common identifier
-merged_tibble <- left_join(X_train_raw, y_train, by = "ID") %>% 
-  filter(COUNTRY == country) %>% 
-  select(!!sym(col1), !!sym(col2), !!sym(target))
-
-res <- ggplot(merged_tibble) +
-  geom_point(aes(x = !!sym(col1), y = !!sym(col2), color = !!sym(target)), size = 2, alpha = 0.9) +
-  scale_color_viridis_c("Taux de chômage", option = "plasma")
-print(res)
-
-```
-
-```{r}
-col1 <- "FR_COAL"
-col2 <- "CARBON_RET"
-country = "FR"
-target <- "TARGET"
-
-# Merge the two tibbles based on a common identifier
-merged_tibble <- left_join(X_train_raw, y_train, by = "ID") %>% 
-  filter(COUNTRY == country) %>% 
-  select(!!sym(col1), !!sym(col2), !!sym(target))
-
-res <- ggplot(merged_tibble) +
-  geom_point(aes(x = !!sym(col1), y = !!sym(col2), color = !!sym(target)), size = 2, alpha = 0.9) +
-  scale_color_viridis_c("Taux de chômage", option = "plasma")
-print(res)
-
-```
-
 ## dTARGET as target
 
 ```{r}
@@ -955,86 +845,4 @@ for (var in colnames(select(merged_tibble, -delta_TARGET))) {
   print(res)
 }
 
-```
-
-# Reproduce benchmark
-
-## Data preparation
-
-Fill-in NAs:
-
-```{r}
-X_train <- X_train_raw %>% replace(is.na(.), 0)
-X_test <- X_test_raw %>% replace(is.na(.), 0)
-```
-
-Drop unused cols. Mind that we use `ID` and `DAY_ID` as explanatory vars.
-
-```{r}
-X_train <- X_train %>% select(-COUNTRY)
-X_test <- X_test %>% select(-COUNTRY)
-```
-
-## Model
-
-Fit OLS:
-
-```{r}
-lm_ <- lm(y_train$TARGET ~ ., data = X_train)
-```
-
-## FEature importance
-
-```{r}
-coef(lm_) %>% 
-  enframe(., name = "Names", value = "Values") %>% 
-  arrange(desc(abs(Values)))
-```
-
-## Comparison of Py and R OLS
-
-Compare with the OLS model in Py benchmlark notebook:
-
-```{r}
-py_lm_ <- read.csv("../tmp/py_benchmark_model_coeffs.csv")
-r_lm_ <- tibble(param = names(coef(lm_)), val = coef(lm_))
-
-# rename Intercept
-r_lm_$param[1] = "intercept"
-
-# outer join between two tibbles
-# ...
-lm_join_ <- full_join(py_lm_, r_lm_, by = "param", suffix = c(".py", ".r"))
-
-# element wise comparison of the models' coefficients
-lm_join_$equal <- near(py_lm_$val, r_lm_$val)
-
-lm_join_
-```
-
-Except few variables (`DE_FR_EXCHANGE` (different), `FR_DE_EXCHANGE` (NA), `DE_NET_EXPORT` (different),`FR_NET_EXPORT` (different), `DE_NET_IMPORT`(NA), `FR_NET_IMPORT` (NA)), the coefficients of the models are the same. For the coefficients that differ, the reason is that OLS in R has automatically detected highly correlated variables and excluded them from the model, thus some of the coefficients are NAs and others are different.
-
-## Model prediction and export results
-
-Predict:
-
-```{r}
-y_hat_train <- predict(lm_, X_train)
-y_hat_test <- predict(lm_, X_test)
-```
-
-Spearman correlation for the predictions on the training set:
-
-```{r}
-cor(y_train$TARGET, y_hat_train, method = "spearman")
-```
-
-This correlation value is the same as the one of the Py benchmark model.
-
-Export predictions on the test set:
-
-```{r}
-to_export <- tibble(ID = X_test_raw$ID, TARGET = y_hat_test)
-
-write_csv(to_export, "../data/y_hat_test.csv")
 ```
