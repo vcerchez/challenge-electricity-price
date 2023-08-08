@@ -1,0 +1,103 @@
+---
+title: "Understanding electric power market"
+output:
+  github_document:
+    html_preview: false
+    toc: true
+    toc_depth: 2
+---
+
+```{r}
+# turn off warnings globally
+options(warn=-1)
+library(readr)
+library(dplyr)
+library(tidyr)
+library(purrr)
+library(tibble)
+library(Hmisc)
+library(ggplot2)
+library(corrplot)
+library(PerformanceAnalytics)
+
+X_train <- read.csv("../data/X_train.csv")
+X_test <- read.csv("../data/X_test.csv")
+y_train <- read.csv("../data/y_train.csv")
+
+X_train$TARGET <- y_train$TARGET
+```
+
+# Basic tests on the challange data
+
+If my understanding is correct, the following two propositions must be correct:
+
+1. The price must be determined by the variable costs of the marginal power station which in all practical cases is a fossil-fuel one and its variable cost is mainly the cost of the combustible. Thus the electricity price must be related to the cost of combustibles. In some extreme cases when the country may have difficulties to produce enough power and to import the missing part, the marginal "plant" can be the "reduction of electricity consumption" ("effacement de consommation électrique") and thus the electricity price may be related to the total consumption (x_CONSUMPTION, x_RESIDUAL_LOAD) and/or total import (x_NET_EXPORT).
+
+1. The price for the electricity must be the same all over the EU. The difference in the prices appears when the amount of the imported electricity required to satisfy the needs of a country surpasses its physical capacities to import. Thus there should be a relation between the difference in the prices between FR and DE and their respective amounts of imported electricity.
+
+## Price as a function of fuel, CO2 tax or import
+
+```{r}
+mask_FR <- X_train$COUNTRY == "FR"
+
+chart.Correlation(
+  select(X_train[mask_FR, ], GAS_RET, COAL_RET, CARBON_RET, FR_CONSUMPTION, FR_RESIDUAL_LOAD, FR_NET_IMPORT, TARGET), 
+  histogram=TRUE, 
+  pch=19)
+
+chart.Correlation(
+  select(X_train[!mask_FR, ], GAS_RET, COAL_RET, CARBON_RET, DE_CONSUMPTION, DE_RESIDUAL_LOAD, DE_NET_IMPORT, TARGET), 
+  histogram=TRUE, 
+  pch=19)
+```
+
+Apparently there is no correlation between the price in FR and any of the fossil-fuel combustibles. This might indicate that the organizers have subtracted the trend from the price and are looking for the prediction of its residual variation. Same is true for DE. However, for the latter we notice a week correlation between consumption, import and price. Draw only them to have more clear plot:
+
+```{r}
+mask_FR <- X_train$COUNTRY == "FR"
+depend_var <- "TARGET"
+
+expl_var <- "DE_RESIDUAL_LOAD"
+res <- ggplot(X_train[!mask_FR, ]) + 
+  geom_point(aes(x = !!sym(expl_var), y = !!sym(depend_var))) + 
+  geom_smooth(mapping = aes(x = !!sym(expl_var), y = !!sym(depend_var)), method = "loess", formula = y ~ x , se = FALSE, color = "red", span = 0.9)
+print(res)
+
+expl_var <- "DE_NET_IMPORT"
+res <- ggplot(X_train[!mask_FR, ]) + 
+  geom_point(aes(x = !!sym(expl_var), y = !!sym(depend_var))) + 
+  geom_smooth(mapping = aes(x = !!sym(expl_var), y = !!sym(depend_var)), method = "loess", formula = y ~ x , se = FALSE, color = "red", span = 0.9)
+print(res)
+```
+
+## Correlation between FR-DE price difference and other variables
+
+Since TARGET is standardized (or nearly standardized) it doesn't make sense to calculate the difference between the prices in FR and DE. Analysis of the historic prices SPOT on eCO2mix shows that, while the electricity prices are in general close in FR and DE, sometimes the difference can attain up to +/-200% of the price in FR.
+
+```{r}
+day_ids <- X_train[X_train$COUNTRY == "DE", "DAY_ID"]
+df <- 
+  X_train[(X_train$DAY_ID %in% day_ids) & (X_train$COUNTRY == "FR"), ] %>% 
+  arrange(DAY_ID) %>% 
+  mutate(TARGET_FR = TARGET) %>% 
+  select(-ID, -COUNTRY, -TARGET)
+
+df$TARGET_DE <- 
+  X_train[(X_train$DAY_ID %in% day_ids) & (X_train$COUNTRY == "DE"), c("DAY_ID", "TARGET")] %>% 
+  arrange(DAY_ID) %>% 
+  pull(TARGET)
+```
+
+## Correlation between TARGET and al other vars
+
+```{r}
+df <- X_train[X_train$COUNTRY == "FR", ] %>% select(c(-ID, -DAY_ID, -COUNTRY))
+
+corrs <- list()
+for (col in head(colnames(df), -1))
+{
+  corrs[col] <- cor(x = df[, col], y = df[, "TARGET"], method = "spearman", use = "complete.obs")
+}
+
+corrs[order(abs(unlist(corrs)), decreasing=TRUE)]
+```
