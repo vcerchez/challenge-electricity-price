@@ -27,12 +27,14 @@ X_train <- head(binned, nrow(X_train))
 X_test <- tail(binned, nrow(X_test))
 
 # convert training data to DMatrix
-dtrain <- xgb.DMatrix(data = as.matrix(X_train), label = y_train[, "TARGET"])
+dtrain_FR <- xgb.DMatrix(data = as.matrix(X_train[mask_train_FR, ]), label = y_train[mask_train_FR, "TARGET"])
+dtrain_DE <- xgb.DMatrix(data = as.matrix(X_train[!mask_train_FR, ]), label = y_train[!mask_train_FR, "TARGET"])
 
 # cross-validation
 params_xgb <- list(max_depth = 2, eta = 0.01, nthread = 1, min_child_weight = 10,
                    objective = "reg:squarederror")
-cv <- xgb.cv(params = params_xgb, data = dtrain, nrounds = 1000, nfold = 5, print_every_n = 10, early_stopping_rounds = 50)
+cv_FR <- xgb.cv(params = params_xgb, data = dtrain_FR, nrounds = 1000, nfold = 5, print_every_n = 10, early_stopping_rounds = 50)
+cv_DE <- xgb.cv(params = params_xgb, data = dtrain_DE, nrounds = 1000, nfold = 5, print_every_n = 10, early_stopping_rounds = 50)
 
 # CV with corr metric
 evalcorr <- function(preds, dtrain) {
@@ -42,17 +44,23 @@ evalcorr <- function(preds, dtrain) {
   return(list(metric = "corr", value = corr))
 }
 set.seed(2023)
-xgb.cv(params = params_xgb, data = dtrain, nrounds = cv$best_iteration, nfold = 5, feval = evalcorr, maximize = TRUE, print_every_n = 10, early_stopping_rounds = NULL)
+xgb.cv(params = params_xgb, data = dtrain_FR, nrounds = cv_FR$best_iteration, nfold = 5, feval = evalcorr, maximize = TRUE, print_every_n = 10, early_stopping_rounds = NULL)
+set.seed(2023)
+xgb.cv(params = params_xgb, data = dtrain_DE, nrounds = cv_DE$best_iteration, nfold = 5, feval = evalcorr, maximize = TRUE, print_every_n = 10, early_stopping_rounds = NULL)
 
 # train model
-model_ <- xgb.train(params = params_xgb, data = dtrain, nrounds = cv$best_iteration)
+model_FR <- xgb.train(params = params_xgb, data = dtrain_FR, nrounds = cv_FR$best_iteration)
+model_DE <- xgb.train(params = params_xgb, data = dtrain_DE, nrounds = cv_DE$best_iteration)
 
 # predictions
 y_hat_train <- vector(mode="numeric", length=nrow(X_train_raw))
 y_hat_test <- vector(mode="numeric", length=nrow(X_test_raw))
 
-y_hat_train <- predict(model_, as.matrix(X_train))
-y_hat_test <- predict(model_, as.matrix(X_test))
+y_hat_train[mask_train_FR] <- predict(model_FR, as.matrix(X_train[mask_train_FR, ]))
+y_hat_train[!mask_train_FR] <- predict(model_DE, as.matrix(X_train[!mask_train_FR, ]))
+
+y_hat_test[mask_test_FR] <- predict(model_FR, as.matrix(X_test[mask_test_FR, ]))
+y_hat_test[!mask_test_FR] <- predict(model_DE, as.matrix(X_test[!mask_test_FR, ]))
 
 # RMSE
 rmse_train_FR <- rmse(y_train[mask_train_FR, "TARGET"], y_hat_train[mask_train_FR]) %>% round(., 3)
