@@ -88,7 +88,7 @@ df$TARGET_DE <-
   pull(TARGET)
 ```
 
-## Correlation between TARGET and al other vars
+## Correlation between TARGET and all other vars
 
 ```{r}
 df <- X_train[X_train$COUNTRY == "FR", ] %>% select(c(-ID, -DAY_ID, -COUNTRY))
@@ -101,3 +101,54 @@ for (col in head(colnames(df), -1))
 
 corrs[order(abs(unlist(corrs)), decreasing=TRUE)]
 ```
+
+## Estimation of the merit-order curve
+
+Inspired by "A Fundamental Model for Continuous Intraday Electricity Trading ". The plot of the electricity price vs consumption must reveal the regime of the market: flat or steep. Moreover, the histogram of the consumption values can be informative about different regimes of electricity demand, e.g. working days vs week-ends.
+
+```{r}
+ggplot(X_train[mask_FR, c("FR_CONSUMPTION", "TARGET")]) + 
+  geom_point(aes(x = FR_CONSUMPTION, y = TARGET))
+
+ggplot(X_train[!mask_FR, c("DE_CONSUMPTION", "TARGET")]) + 
+  geom_point(aes(x = DE_CONSUMPTION, y = TARGET))
+
+ggplot(X_train[mask_FR, c("FR_CONSUMPTION", "DE_CONSUMPTION")]) + 
+  geom_histogram(aes(x = FR_CONSUMPTION))
+
+ggplot(X_train[mask_FR, c("FR_CONSUMPTION", "DE_CONSUMPTION")]) + 
+  geom_histogram(aes(x = DE_CONSUMPTION))
+```
+
+Once again, since we are dealing with processed data, we can't say anything about the merit-order curve and the regime (steep or flat merit-order) of the market.
+
+The histograms show that there are few different components in the distribution of the x_CONSUMPTIOPN which might correspond to the working days/free days.However, if consumption is also given as the first difference, the interpretation of these modes becomes different and harder to explain.
+
+## Sum of the vars
+
+Hypothesis: if we are working with the first differences of vars, their sums must represent the total change. E.g. d_CONSUMPTION = d_PROD + d_IMPORT. Check it:
+
+```{r}
+df <- 
+  data.frame(
+    production = X_train$FR_GAS + X_train$FR_COAL + X_train$FR_HYDRO + X_train$FR_NUCLEAR + X_train$FR_SOLAR + X_train$FR_WINDPOW, 
+    import = X_train$FR_NET_IMPORT, 
+    fr_de_export = X_train$FR_DE_EXCHANGE,
+    consumption = X_train$FR_CONSUMPTION, 
+    residual_consumption = X_train$FR_RESIDUAL_LOAD,
+    renewable_prod = X_train$FR_SOLAR + X_train$FR_WINDPOW,
+    import_plus_consumption = X_train$FR_NET_IMPORT + X_train$FR_CONSUMPTION)
+
+df$total <- df$production + df$import_plus_consumption
+df
+```
+
+Another way to check this hypothesis is to verify the rank of the matrix:
+
+```{r}
+library(Matrix)
+# drop useless cols and cols having perfect correlation with some other cols
+df_ <- subset(X_train, select = -c(ID, DAY_ID, COUNTRY, DE_FR_EXCHANGE, FR_NET_EXPORT, DE_NET_EXPORT))
+rankMatrix(as.matrix(df_[complete.cases(df_), ]))
+```
+The matrix is full-rank, so no evidence for the linear relations between vars.
